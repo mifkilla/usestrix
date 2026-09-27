@@ -59,7 +59,7 @@ Five things bite people, in roughly this order:
 ## Install
 
 ```bash
-git clone https://github.com/<your-account>/usestrix.git
+git clone https://github.com/mifkilla/usestrix.git
 cd usestrix
 ./install.sh
 ```

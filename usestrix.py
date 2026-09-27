@@ -607,6 +607,103 @@ def stop_running_scan() -> None:
             subprocess.run(["kill", "-9", p])
 
 
+
+def run_scan(cmd: list[str], eng: Path | None = None, resume_run: Path | None = None) -> int:
+    """Запуск Strix с живой панелью и веб-просмотрщиком.
+
+    Общая для нового скана и для продолжения: раньше resume шёл мимо панели
+    и мимо ссылки на просмотрщик, потому что был отдельной веткой кода.
+    """
+    say(t("rc_note"), "yellow")
+    say(t("ctrlc"), "yellow")
+
+    log = (eng / "strix.log") if eng else (WORK / "_resume.log")
+    env = dict(os.environ, **read_strix_env())
+    t0 = time.time()
+    lf = open(log, "a", encoding="utf-8")
+    pr = subprocess.Popen(cmd, cwd=str(WORK), env=env, stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT, text=True)
+
+    def _pump() -> None:
+        for line in pr.stdout:
+            lf.write(line)
+            lf.flush()
+
+    threading.Thread(target=_pump, daemon=True).start()
+
+    # при resume прогон уже известен, ждать появления каталога не нужно
+    run = resume_run if resume_run is not None else _newest_run_after(t0)
+    if run:
+        link = start_viewer_for(run.name)
+        say(f"{t('run_is')} [bold]{run.name}[/bold]", "cyan")
+        if link:
+            say(t("watch"), "green")
+            say(f"   {link}", "bold cyan")
+            say(t("token_warn"), "yellow")
+            if eng:
+                (eng / "viewer-url.txt").write_text(link + "\n", encoding="utf-8")
+
+    rc = None
+    try:
+        if RICH and run:
+            from rich.live import Live
+            with Live(refresh_per_second=2, console=C) as live:
+                while pr.poll() is None:
+                    s = _scan_state(run)
+                    el = round(time.time() - t0)
+                    tb = Table(box=box.ROUNDED, show_header=False,
+                               title=f"[bold]{t('scanning')}[/bold]  {el // 60}m {el % 60}s")
+                    tb.add_column(style="bold", width=18); tb.add_column()
+                    tb.add_row(t("turn"), s["turn"])
+                    tb.add_row(t("agent"), s["agent"])
+                    tb.add_row(t("surfaces"), str(s["surfaces"]))
+                    tb.add_row(t("sarif"), str(s["found"]))
+                    tb.add_row(t("spend"), s["cost"])
+                    tb.add_row(t("stop_hint"), t("stop_key"))
+                    live.update(tb)
+                    time.sleep(2)
+        else:
+            while pr.poll() is None:
+                s = _scan_state(run) if run else {}
+                print(f"\r  {t('turn')} {s.get('turn', '-')} | "
+                      f"{str(s.get('agent', '-'))[:30]} | {round(time.time() - t0)}s   ",
+                      end="", flush=True)
+                time.sleep(3)
+            print()
+        rc = pr.wait()
+    except KeyboardInterrupt:
+        say(t("stopping"), "yellow")
+        pr.terminate()
+        try:
+            rc = pr.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            say(t("no_react"), "red")
+            pr.kill()
+            rc = pr.wait()
+    finally:
+        lf.close()
+
+    dt = round(time.time() - t0)
+    if eng:
+        (eng / "status.txt").write_text(
+            f"exit_code={rc}\nseconds={dt}\n"
+            f"finished={datetime.now().isoformat(timespec='seconds')}\n", encoding="utf-8")
+    head(t("result"), f"{dt}s, exit code {rc}")
+    if rc == 0:
+        say(t("clean"), "green")
+    elif rc == 2:
+        say(t("found"), "yellow")
+        if run:
+            summarize(run)
+        else:
+            summarize_latest()
+    else:
+        say(f"{t('err')} {rc}. {log}", "red")
+    if run:
+        say(f"\n{t('findings_at')} {run}", "dim")
+    return rc or 0
+
+
 # ---------------------------------------------------------------- launch ---
 def build_and_run() -> int:
     kind, targets = target_kind()
@@ -677,87 +774,9 @@ def build_and_run() -> int:
         say(f"{t('cancelled')} {eng}/command.txt", "yellow")
         return 0
 
-    say(t("rc_note"), "yellow")
-    say(t("ctrlc"), "yellow")
-
-    log = eng / "strix.log"
-    env = dict(os.environ, **read_strix_env())
-    t0 = time.time()
-    lf = open(log, "w", encoding="utf-8")
-    pr = subprocess.Popen(cmd, cwd=str(WORK), env=env, stdout=subprocess.PIPE,
-                          stderr=subprocess.STDOUT, text=True)
-
-    def _pump() -> None:
-        for line in pr.stdout:
-            lf.write(line)
-            lf.flush()
-
-    threading.Thread(target=_pump, daemon=True).start()
-
-    run = _newest_run_after(t0)
-    if run:
-        link = start_viewer_for(run.name)
-        say(f"{t('run_is')} [bold]{run.name}[/bold]", "cyan")
-        if link:
-            say(t("watch"), "green")
-            say(f"   {link}", "bold cyan")
-            say(t("token_warn"), "yellow")
-            (eng / "viewer-url.txt").write_text(link + "\n", encoding="utf-8")
-
-    rc = None
-    try:
-        if RICH and run:
-            from rich.live import Live
-            with Live(refresh_per_second=2, console=C) as live:
-                while pr.poll() is None:
-                    s = _scan_state(run)
-                    el = round(time.time() - t0)
-                    tb = Table(box=box.ROUNDED, show_header=False,
-                               title=f"[bold]{t('scanning')}[/bold]  {el // 60}m {el % 60}s")
-                    tb.add_column(style="bold", width=18); tb.add_column()
-                    tb.add_row(t("turn"), s["turn"])
-                    tb.add_row(t("agent"), s["agent"])
-                    tb.add_row(t("surfaces"), str(s["surfaces"]))
-                    tb.add_row(t("sarif"), str(s["found"]))
-                    tb.add_row(t("spend"), s["cost"])
-                    tb.add_row(t("stop_hint"), t("stop_key"))
-                    live.update(tb)
-                    time.sleep(2)
-        else:
-            while pr.poll() is None:
-                s = _scan_state(run) if run else {}
-                print(f"\r  {t('turn')} {s.get('turn', '-')} | "
-                      f"{str(s.get('agent', '-'))[:30]} | {round(time.time() - t0)}s   ",
-                      end="", flush=True)
-                time.sleep(3)
-            print()
-        rc = pr.wait()
-    except KeyboardInterrupt:
-        say(t("stopping"), "yellow")
-        pr.terminate()
-        try:
-            rc = pr.wait(timeout=60)
-        except subprocess.TimeoutExpired:
-            say(t("no_react"), "red")
-            pr.kill()
-            rc = pr.wait()
-    finally:
-        lf.close()
-
-    dt = round(time.time() - t0)
-    (eng / "status.txt").write_text(
-        f"exit_code={rc}\nseconds={dt}\nfinished={datetime.now().isoformat(timespec='seconds')}\n",
-        encoding="utf-8")
-    head(t("result"), f"{dt}s, exit code {rc}")
-    if rc == 0:
-        say(t("clean"), "green")
-    elif rc == 2:
-        say(t("found"), "yellow")
-        summarize_latest()
-    else:
-        say(f"{t('err')} {rc}. {log}", "red")
-    say(f"\n{t('traces')} {eng}\n{t('findings_at')} {RUNS}", "dim")
-    return rc or 0
+    rc = run_scan(cmd, eng=eng)
+    say(f"\n{t('traces')} {eng}", "dim")
+    return rc
 
 
 # --------------------------------------------------------------- results ---
@@ -831,8 +850,9 @@ def do_resume() -> int:
     say("  " + " ".join(shlex.quote(c) for c in cmd), "dim")
     if not yes(t("resume_q"), True):
         return 0
-    env = dict(os.environ, **read_strix_env())
-    return subprocess.run(cmd, cwd=str(WORK), env=env).returncode
+    # ⛔ раньше здесь был простой subprocess.run: ни панели, ни ссылки на
+    # просмотрщик, ни мягкой остановки. Теперь тот же путь, что у нового скана.
+    return run_scan(cmd, resume_run=run)
 
 
 def viewer_menu() -> None:
