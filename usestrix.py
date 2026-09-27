@@ -55,8 +55,11 @@ ENGAGEMENTS = WORK / "engagements"
 RUNS = WORK / "strix_runs"
 STRIX_DIR = Path(os.environ.get("STRIX_CONFIG_DIR", HOME / ".strix")).expanduser()
 VIEWER_PORT = int(os.environ.get("USESTRIX_VIEWER_PORT", "3400"))
-LANG = os.environ.get("USESTRIX_LANG", "").lower() or (
-    "ru" if (os.environ.get("LANG", "").lower().startswith("ru")) else "en")
+# English by default everywhere. Russian is opt-in, so behaviour does not
+# change under the user's locale: USESTRIX_LANG=ru
+LANG = os.environ.get("USESTRIX_LANG", "en").strip().lower()
+if LANG not in ("en", "ru"):
+    LANG = "en"
 
 
 def find_strix() -> str | None:
@@ -144,6 +147,18 @@ T = {
         "stop_q": "Stop them? Findings will be kept",
         "stopped_in": "Stopped after", "no_graceful": "No graceful stop within 40s.",
         "force_q": "Force kill? The final report may not be assembled",
+        "pf_strix": "strix", "pf_docker": "docker", "pf_sandbox": "sandbox image",
+        "pf_model": "model", "pf_key": "api key", "pf_disk": "free disk",
+        "pf_notfound": "not found - see README",
+        "pf_responds": "daemon responds",
+        "pf_noresponds": "NOT responding; Strix cannot run",
+        "pf_present": "present",
+        "pf_willpull": "will be pulled on first run (~4 GB)",
+        "pf_nomodel": "STRIX_LLM is not set",
+        "pf_keyset": "set, never passed on the command line",
+        "pf_nokey": "LLM_API_KEY is not set",
+        "col_sev": "severity", "col_cvss": "cvss", "col_conf": "conf",
+        "col_cwe": "cwe", "col_title": "title",
         "resume_note": "Strix picks up the root agent and live subagents.",
         "new_cap": "New spending cap, USD", "resume_q": "Resume this run?",
     },
@@ -212,6 +227,18 @@ T = {
         "stop_q": "Остановить? Найденное сохранится",
         "stopped_in": "Остановлен за", "no_graceful": "Не отреагировал за 40 с.",
         "force_q": "Снять принудительно? Итог может не собраться",
+        "pf_strix": "strix", "pf_docker": "docker", "pf_sandbox": "образ песочницы",
+        "pf_model": "модель", "pf_key": "ключ", "pf_disk": "диск",
+        "pf_notfound": "не найден, смотри README",
+        "pf_responds": "демон отвечает",
+        "pf_noresponds": "НЕ отвечает, Strix не запустится",
+        "pf_present": "скачан",
+        "pf_willpull": "будет скачан при первом запуске (~4 ГБ)",
+        "pf_nomodel": "STRIX_LLM не задан",
+        "pf_keyset": "задан, в команду не попадает",
+        "pf_nokey": "LLM_API_KEY не задан",
+        "col_sev": "критичность", "col_cvss": "cvss", "col_conf": "увер.",
+        "col_cwe": "cwe", "col_title": "находка",
         "resume_note": "Strix подхватит историю корневого агента и живых субагентов.",
         "new_cap": "Новый потолок расхода, USD", "resume_q": "Продолжить прогон?",
     },
@@ -353,18 +380,14 @@ def preflight() -> dict:
 
 def show_preflight(st: dict) -> bool:
     rows = [
-        (st["strix"], "strix", st["version"] or ("not found - see README" if LANG == "en"
-                                                 else "не найден, смотри README")),
-        (st["docker"], "docker", "daemon responds" if st["docker"] else
-         ("NOT responding; Strix cannot run" if LANG == "en" else "НЕ отвечает, Strix не запустится")),
-        (st["sandbox"], "sandbox image", "present" if st["sandbox"] else
-         ("will be pulled on first run (~4 GB)" if LANG == "en"
-          else "будет скачан при первом запуске (~4 ГБ)")),
-        (bool(st["model"]), "model", st["model"] or "STRIX_LLM is not set"),
-        (st["key"], "api key", ("set, never passed on the command line" if LANG == "en"
-                                else "задан, в команду не попадает") if st["key"]
-         else "LLM_API_KEY is not set"),
-        (st["free_gb"] > 5, "free disk", f"{st['free_gb']} GB"),
+        (st["strix"], t("pf_strix"), st["version"] or t("pf_notfound")),
+        (st["docker"], t("pf_docker"),
+         t("pf_responds") if st["docker"] else t("pf_noresponds")),
+        (st["sandbox"], t("pf_sandbox"),
+         t("pf_present") if st["sandbox"] else t("pf_willpull")),
+        (bool(st["model"]), t("pf_model"), st["model"] or t("pf_nomodel")),
+        (st["key"], t("pf_key"), t("pf_keyset") if st["key"] else t("pf_nokey")),
+        (st["free_gb"] > 5, t("pf_disk"), f"{st['free_gb']} GB"),
     ]
     if RICH:
         tb = Table(box=box.SIMPLE, show_header=False)
@@ -759,8 +782,8 @@ def summarize(run: Path) -> None:
                           -float(x.get("cvss") or 0)))
     if RICH:
         tb = Table(title=run.name, box=box.SIMPLE)
-        for col in ("severity", "cvss", "conf", "cwe", "title"):
-            tb.add_column(col, style="bold" if col == "severity" else "")
+        for key in ("col_sev", "col_cvss", "col_conf", "col_cwe", "col_title"):
+            tb.add_column(t(key), style="bold" if key == "col_sev" else "")
         colors = {"critical": "red", "high": "orange3", "medium": "yellow", "low": "dim"}
         for x in v:
             s = str(x.get("severity", "?")).lower()

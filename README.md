@@ -10,6 +10,8 @@ and keeps an auditable record of every engagement.
 
 *Not affiliated with the Strix project. MIT licensed.*
 
+*Русская версия: [README.ru.md](README.ru.md)*
+
 ---
 
 ## Why this exists
