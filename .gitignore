@@ -1,0 +1,25 @@
+# scan output and engagement records - never commit these,
+# they contain target names, findings and viewer tokens
+strix_runs/
+engagements/
+*.log
+viewer-url.txt
+
+# secrets
+.env
+.strix/
+*.key
+*.pem
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# editors and os
+.vscode/
+.idea/
+.DS_Store
+*.swp
