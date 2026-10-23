@@ -23,7 +23,7 @@ Five things bite people, in roughly this order:
 | `--scan-mode` defaults to **deep** | Forget the flag and you get 1–4 hours of work and tens of dollars |
 | `--max-turns` is counted **per agent** | A scan spawns several agents, so `100` can mean 500 turns in total |
 | `--max-budget` is checked **after** a model reply | Small overshoot is normal; subagents wind down near 90% so the root agent can still write the report |
-| Exit code **2** means *vulnerabilities found* | Not a failure. CI that treats non-zero as broken will report it wrong |
+| Exit code **2** means *vulnerabilities found* | Not a failure. CI that treats non-zero as broken will report it wrong. Since Strix 1.7 `--fail-on` gates exit 2 by severity |
 | A local directory target is mounted **writable** | Strix runs the application; expect new files in your working tree |
 
 `usestrix` makes each of these visible instead of surprising.
@@ -41,6 +41,8 @@ Five things bite people, in roughly this order:
   ones.
 - **Graceful stop** — `Ctrl+C`, or the menu item from a second terminal.
   `SIGTERM` first, so Strix saves what it has already found.
+- **Severity exit gate** — asks whether to pass Strix 1.7's `--fail-on`
+  (headless CI runs: exit 2 only for findings at or above the chosen severity).
 - **Resume** — pick a previous run and continue it with a fresh budget.
 - **Findings summary** — sorted by severity, with CVSS and confidence.
 - **Audit trail** — every run writes `command.txt`, `scope.md`,

@@ -33,7 +33,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 # --- optional pretty output: degrade gracefully if rich is missing ---------
 try:
@@ -118,11 +118,16 @@ T = {
         "name_q": "Engagement name", "notes_q": "Your notes in plain words (Enter to skip)",
         "scope_q": "Code scope", "s_full": "full|the whole codebase",
         "s_diff": "diff|changed files only",
+        "failon_q": "Gate the exit code by severity (--fail-on, Strix 1.7+)",
+        "f_off": "off|any finding exits 2 (Strix default)",
+        "f_crit": "critical|exit 2 only on critical findings",
         "plan": "Launch plan", "trace": "trace",
         "targets": "targets", "mode": "mode", "cap": "cap",
         "turns": "turns per agent", "scope": "code scope", "preset_row": "preset",
         "run_q": "\nRun it?", "cancelled": "Cancelled. Command saved:",
-        "rc_note": ("\nExit code 2 = VULNERABILITIES FOUND, not a failure. 1 = error."),
+        "rc_note": ("\nExit code 2 = VULNERABILITIES FOUND, not a failure. 1 = error."
+                    "\nWith --fail-on (Strix 1.7+) exit 2 requires a finding at or "
+                    "above the chosen severity."),
         "ctrlc": "   Ctrl+C stops the scan gracefully; findings are kept.\n",
         "run_is": "run:", "watch": "WATCH IT IN YOUR BROWSER:",
         "token_warn": "   the link carries a token - do not share it\n",
@@ -198,11 +203,15 @@ T = {
         "name_q": "Имя работы", "notes_q": "Пожелания своими словами (Enter - пропустить)",
         "scope_q": "Охват кода", "s_full": "full|весь код целиком",
         "s_diff": "diff|только изменённые файлы",
+        "failon_q": "Гейт кода возврата по критичности (--fail-on, Strix 1.7+)",
+        "f_off": "выкл|любая находка даёт код 2 (штатно для Strix)",
+        "f_crit": "critical|код 2 только на критических находках",
         "plan": "План запуска", "trace": "следы",
         "targets": "цели", "mode": "режим", "cap": "потолок",
         "turns": "ходов на агента", "scope": "охват кода", "preset_row": "заготовка",
         "run_q": "\nЗапускать?", "cancelled": "Отменено. Команда сохранена:",
-        "rc_note": "\nКод возврата 2 = НАЙДЕНЫ УЯЗВИМОСТИ, это не сбой. 1 = ошибка.",
+        "rc_note": "\nКод возврата 2 = НАЙДЕНЫ УЯЗВИМОСТИ, это не сбой. 1 = ошибка."
+                   "\nС --fail-on (Strix 1.7+) код 2 требует находки выбранной критичности или выше.",
         "ctrlc": "   Ctrl+C останавливает скан МЯГКО, найденное сохраняется.\n",
         "run_is": "прогон:", "watch": "СМОТРЕТЬ ХОД В БРАУЗЕРЕ:",
         "token_warn": "   в ссылке токен, никому не пересылать\n",
@@ -721,6 +730,12 @@ def build_and_run() -> int:
     if kind in ("code", "repo"):
         scope_mode = menu(t("scope_q"), [("full", t("s_full")), ("diff", t("s_diff"))])
 
+    # Strix 1.7+: --fail-on gates the headless exit code by severity.
+    fail_on = menu(t("failon_q"), [("off", t("f_off")),
+                                   ("critical", t("f_crit")),
+                                   ("high", "high"), ("medium", "medium"),
+                                   ("low", "low")])
+
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     eng = ENGAGEMENTS / f"{ts}_{name}"
     eng.mkdir(parents=True, exist_ok=True)
@@ -747,13 +762,15 @@ def build_and_run() -> int:
     cmd += ["--scan-mode", p["mode"], "--scope-mode", scope_mode,
             "--max-budget", str(p["budget"]), "--max-turns", str(p["turns"]),
             "--instruction-file", str(instr)]
+    if fail_on != "off":
+        cmd += ["--fail-on", fail_on]
 
     (eng / "command.txt").write_text(" ".join(shlex.quote(c) for c in cmd) + "\n",
                                      encoding="utf-8")
     (eng / "scope.md").write_text(
         f"# {name}\n\ncreated: {datetime.now().isoformat(timespec='seconds')}\n"
         f"mode: {p['mode']}\ncap: ${p['budget']}\nturns per agent: {p['turns']}\n"
-        f"code scope: {scope_mode}\n\ntargets:\n"
+        f"code scope: {scope_mode}\nfail-on: {fail_on}\n\ntargets:\n"
         + "".join(f"- {x}\n" for x in targets)
         + f"\npreset: {p['title']}\nbasis: {p.get('why', '')}\n", encoding="utf-8")
 
@@ -761,9 +778,12 @@ def build_and_run() -> int:
     if RICH:
         tb = Table(box=box.SIMPLE, show_header=False)
         tb.add_column(style="bold", width=18); tb.add_column()
-        for k_, v_ in ((t("targets"), ", ".join(targets)), (t("mode"), p["mode"]),
-                       (t("cap"), f"${p['budget']}"), (t("turns"), str(p["turns"])),
-                       (t("scope"), scope_mode), (t("preset_row"), p["title"])):
+        rows = [(t("targets"), ", ".join(targets)), (t("mode"), p["mode"]),
+                (t("cap"), f"${p['budget']}"), (t("turns"), str(p["turns"])),
+                (t("scope"), scope_mode), (t("preset_row"), p["title"])]
+        if fail_on != "off":
+            rows.append(("fail-on", fail_on))
+        for k_, v_ in rows:
             tb.add_row(k_, v_)
         C.print(tb)
         C.print(f"\n[dim]{' '.join(shlex.quote(c) for c in cmd)}[/dim]")
@@ -888,7 +908,8 @@ HELP_EN = """
   • [yellow]--max-turns[/yellow] is PER AGENT, and a scan spawns several
   • [yellow]--max-budget[/yellow] is checked AFTER a model reply, small overshoot happens;
     subagents wind down near 90% so the root agent can write the report
-  • exit code [green]2[/green] means "vulnerabilities found", not a failure
+  • exit code [green]2[/green] means "vulnerabilities found", not a failure;
+    with [yellow]--fail-on[/yellow] (Strix 1.7+) exit 2 is gated by severity
   • a local directory is mounted [red]writable[/red]: Strix runs the app and leaves files
 
 [bold]Where things live[/bold]
@@ -916,7 +937,8 @@ HELP_RU = """
   • [yellow]--max-turns[/yellow] считается НА КАЖДОГО агента, а их бывает несколько
   • [yellow]--max-budget[/yellow] проверяется ПОСЛЕ ответа модели, небольшой
     перерасход возможен; субагенты сворачиваются около 90%
-  • код возврата [green]2[/green] означает «найдены уязвимости», а не сбой
+  • код возврата [green]2[/green] означает «найдены уязвимости», а не сбой;
+    с [yellow]--fail-on[/yellow] (Strix 1.7+) код 2 гейтится по критичности
   • локальный каталог монтируется [red]с правом записи[/red]: Strix запускает
     приложение, в каталоге появятся чужие файлы
 
